@@ -24,15 +24,19 @@
 #include <U8g2lib.h>
 
 // ================== PIN LoRa ONBOARD T-BEAM V1.2 ==================
+#define LORA_SCK   5
+#define LORA_MISO  19
+#define LORA_MOSI  27
 #define LORA_SS    18
 #define LORA_RST   23
 #define LORA_DIO0  26
 #define LORA_FREQ  923E6
 
 // ================== PIN PMU AXP2101 (I2C) ==================
+#define XPOWERS_CHIP_AXP2101
 #define PMU_SDA 21
 #define PMU_SCL 22
-XPowersPMU PMU;
+XPowersAXP2101 PMU;
 bool pmuOK = false;
 
 // ================== PIN OLED (OPSIONAL, via I2C bus sama) ==================
@@ -62,8 +66,32 @@ void initPMU() {
     Serial.println("PMU AXP2101 GAGAL diinisialisasi! LoRa tidak akan menyala.");
     return;
   }
-  PMU.setALDO2(3300); PMU.enableALDO2();   // suplai ke modul LoRa
+  PMU.setALDO2Voltage(3300);
+  PMU.enableALDO2();   // suplai ke modul LoRa
   Serial.println("PMU AXP2101 siap. Rail LoRa (ALDO2) dinyalakan.");
+}
+
+bool splitCSV(const String &s, String out[], int maxFields) {
+  int start = 0;
+  int fieldIndex = 0;
+
+  for (int i = 0; i <= (int)s.length(); i++) {
+    if (i == (int)s.length() || s[i] == ',') {
+      if (fieldIndex >= maxFields) return false;
+
+      if (fieldIndex == maxFields - 1) {
+        out[fieldIndex] = s.substring(start);
+        fieldIndex++;
+        break;
+      }
+
+      out[fieldIndex] = s.substring(start, i);
+      fieldIndex++;
+      start = i + 1;
+    }
+  }
+
+  return fieldIndex == maxFields;
 }
 
 void updateOLED(String lastEvent) {
@@ -97,6 +125,8 @@ void setup() {
 
   initPMU();
 
+  SPI.begin(LORA_SCK, LORA_MISO, LORA_MOSI, LORA_SS);
+  LoRa.setSPI(SPI);
   LoRa.setPins(LORA_SS, LORA_RST, LORA_DIO0);
   if (!LoRa.begin(LORA_FREQ)) {
     Serial.println("LoRa init GAGAL! Periksa modul/board/PMU.");
@@ -105,7 +135,9 @@ void setup() {
   }
   LoRa.setSpreadingFactor(9);
   LoRa.setSignalBandwidth(125E3);
+  LoRa.setCodingRate4(5);
   LoRa.setSyncWord(0xF3); // HARUS SAMA dengan sync word di field_node.ino
+  LoRa.enableCrc();
 
   Serial.println("GATEWAY_READY");
   updateOLED("Siap. Menunggu paket...");
@@ -122,10 +154,25 @@ void loop() {
   float snr = LoRa.packetSnr();
   lastRssi = rssi;
 
-  int firstComma = incoming.indexOf(',');
-  if (firstComma < 0) return; // paket tidak valid
+  const int NFIELD = 11;
+  String fields[NFIELD];
+  if (!splitCSV(incoming, fields, NFIELD)) {
+    Serial.println("[DROP] Format paket tidak valid.");
+    return;
+  }
 
-  uint16_t pktId = incoming.substring(0, firstComma).toInt();
+  uint16_t pktId = (uint16_t)fields[0].toInt();
+  if (pktId == 0) {
+    Serial.println("[DROP] Packet ID tidak valid.");
+    return;
+  }
+
+  int maxHop = fields[3].toInt();
+  if (maxHop < 0 || maxHop > 20) {
+    Serial.println("[DROP] MAX_HOP tidak valid.");
+    return;
+  }
+
   if (alreadySeen(pktId)) return; // sudah pernah diteruskan ke server
   markSeen(pktId);
   rxCount++;
