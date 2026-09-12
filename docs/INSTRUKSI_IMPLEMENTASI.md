@@ -208,11 +208,12 @@ Beralih ke LILYGO T-Beam AXP2101 mengubah beberapa asumsi teknis di Bab 2.4 prop
   listrik ke tiap modul (LoRa, GPS) secara terpisah — ini **wajib diinisialisasi
   lewat kode** (lihat `initPMU()` di firmware), berbeda dari board ESP32+LoRa
   polos yang listriknya langsung tersambung tanpa switching.
-- **GPS built-in**: T-Beam sudah punya modul GPS NEO-M8N onboard. Proposal
-  awalnya mengandalkan GPS dari smartphone korban (via browser geolocation),
-  fitur ini tetap dipakai untuk portal korban. GPS onboard T-Beam bisa jadi
-  pengembangan lanjutan opsional (misal mencatat lokasi presisi tiap field
-  node itu sendiri), belum diimplementasikan di firmware versi ini.
+- **GPS built-in**: T-Beam sudah punya modul GPS NEO-M8N onboard dan firmware
+  field node sekarang memakai GPS node sebagai sumber koordinat laporan.
+  Ini lebih cocok untuk mode offline/captive portal karena browser HP sering
+  memblokir geolocation pada halaman `http://192.168.4.1` yang tidak HTTPS.
+  Lokasi yang tampil di dashboard adalah posisi field node tempat korban
+  tersambung/mengirim laporan.
 - **RAB**: harga per-unit T-Beam (ESP32+LoRa+GPS+PMU jadi satu) berbeda dari
   ESP32 DevKit + modul LoRa RA-02 terpisah. Perbarui Tabel 5.2 di proposal
   dengan harga T-Beam AXP2101 aktual dari supplier Anda.
@@ -236,8 +237,8 @@ PKT_ID,SRC_ID,HOP,MAX_HOP,LAT,LON,HAS_GPS,KONDISI,JUMLAH,SOS,PESAN
 | SRC_ID | ID node asal pelapor |
 | HOP | Jumlah hop yang sudah dilalui (bertambah tiap relay) |
 | MAX_HOP | TTL maksimum (default 5) — mencegah looping paket selamanya |
-| LAT, LON | Koordinat GPS (0,0 jika tidak tersedia) |
-| HAS_GPS | 1 jika GPS aktif, 0 jika lokasi manual/tidak ada |
+| LAT, LON | Koordinat GPS field node/T-Beam (0,0 jika belum fix) |
+| HAS_GPS | 1 jika GPS node sudah fix, 0 jika belum tersedia |
 | KONDISI | RINGAN / SEDANG / BERAT / KRITIS |
 | JUMLAH | Jumlah korban dalam laporan tersebut |
 | SOS | 1 jika dikirim lewat tombol SOS |

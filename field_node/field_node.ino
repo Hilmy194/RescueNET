@@ -79,6 +79,28 @@
 
 
 // ================================================================
+// GPS ONBOARD T-BEAM
+// ================================================================
+
+#define GPS_RX_PIN     34
+#define GPS_TX_PIN     12
+#define GPS_BAUD       9600
+
+HardwareSerial GPSSerial(1);
+
+String gpsLine;
+
+float nodeLat = 0.0;
+float nodeLon = 0.0;
+
+bool nodeGpsFix = false;
+
+unsigned long lastGpsFixMs = 0;
+
+const unsigned long GPS_FIX_MAX_AGE_MS = 300000;
+
+
+// ================================================================
 // PMU AXP2101
 // ================================================================
 
@@ -167,6 +189,253 @@ float readBatteryVoltage()
         return 0.0;
 
     return PMU.getBattVoltage() / 1000.0;
+}
+
+
+// ================================================================
+// GPS NODE
+// ================================================================
+
+bool hasFreshNodeGps()
+{
+    return
+        nodeGpsFix &&
+        millis() - lastGpsFixMs <= GPS_FIX_MAX_AGE_MS;
+}
+
+
+String getCsvField(
+    const String &s,
+    int target
+)
+{
+    int start = 0;
+    int index = 0;
+
+    for (
+        int i = 0;
+        i <= (int)s.length();
+        i++
+    )
+    {
+        if (
+            i == (int)s.length() ||
+            s[i] == ','
+        )
+        {
+            if (index == target)
+            {
+                return s.substring(
+                    start,
+                    i
+                );
+            }
+
+            start =
+                i + 1;
+
+            index++;
+        }
+    }
+
+    return "";
+}
+
+
+float parseNmeaCoordinate(
+    const String &raw,
+    const String &hemi
+)
+{
+    if (raw.length() < 4)
+        return 0.0;
+
+    int degreeLength =
+        (hemi == "E" || hemi == "W")
+            ? 3
+            : 2;
+
+    float degrees =
+        raw.substring(
+            0,
+            degreeLength
+        ).toFloat();
+
+    float minutes =
+        raw.substring(
+            degreeLength
+        ).toFloat();
+
+    float value =
+        degrees +
+        minutes / 60.0;
+
+    if (
+        hemi == "S" ||
+        hemi == "W"
+    )
+    {
+        value =
+            -value;
+    }
+
+    return value;
+}
+
+
+void parseGpsSentence(String sentence)
+{
+    sentence.trim();
+
+    bool isRmc =
+        sentence.startsWith("$GPRMC") ||
+        sentence.startsWith("$GNRMC");
+
+    bool isGga =
+        sentence.startsWith("$GPGGA") ||
+        sentence.startsWith("$GNGGA");
+
+    if (isRmc)
+    {
+        String status =
+            getCsvField(
+                sentence,
+                2
+            );
+
+        if (status != "A")
+            return;
+
+        float lat =
+            parseNmeaCoordinate(
+                getCsvField(sentence, 3),
+                getCsvField(sentence, 4)
+            );
+
+        float lon =
+            parseNmeaCoordinate(
+                getCsvField(sentence, 5),
+                getCsvField(sentence, 6)
+            );
+
+        if (
+            lat != 0.0 ||
+            lon != 0.0
+        )
+        {
+            nodeLat =
+                lat;
+
+            nodeLon =
+                lon;
+
+            nodeGpsFix =
+                true;
+
+            lastGpsFixMs =
+                millis();
+        }
+
+        return;
+    }
+
+    if (isGga)
+    {
+        int fixQuality =
+            getCsvField(
+                sentence,
+                6
+            ).toInt();
+
+        if (fixQuality <= 0)
+            return;
+
+        float lat =
+            parseNmeaCoordinate(
+                getCsvField(sentence, 2),
+                getCsvField(sentence, 3)
+            );
+
+        float lon =
+            parseNmeaCoordinate(
+                getCsvField(sentence, 4),
+                getCsvField(sentence, 5)
+            );
+
+        if (
+            lat != 0.0 ||
+            lon != 0.0
+        )
+        {
+            nodeLat =
+                lat;
+
+            nodeLon =
+                lon;
+
+            nodeGpsFix =
+                true;
+
+            lastGpsFixMs =
+                millis();
+        }
+    }
+}
+
+
+void readNodeGps()
+{
+    while (GPSSerial.available())
+    {
+        char c =
+            (char)GPSSerial.read();
+
+        if (c == '\n')
+        {
+            parseGpsSentence(
+                gpsLine
+            );
+
+            gpsLine =
+                "";
+        }
+        else if (c != '\r')
+        {
+            if (gpsLine.length() < 120)
+            {
+                gpsLine +=
+                    c;
+            }
+            else
+            {
+                gpsLine =
+                    "";
+            }
+        }
+    }
+}
+
+
+void getNodeLocation(
+    bool &hasGps,
+    float &lat,
+    float &lon
+)
+{
+    readNodeGps();
+
+    hasGps =
+        hasFreshNodeGps();
+
+    lat =
+        hasGps
+            ? nodeLat
+            : 0.0;
+
+    lon =
+        hasGps
+            ? nodeLon
+            : 0.0;
 }
 
 
@@ -275,9 +544,9 @@ void updateOLED(String lastEvent)
         String(rxCount);
 
     String line3 =
-        "Bat:" +
-        String(readBatteryVoltage(), 2) +
-        "V";
+        hasFreshNodeGps()
+            ? "GPS:FIX"
+            : "GPS:NO FIX";
 
 
     u8g2.drawStr(
@@ -586,7 +855,7 @@ value="0">
 
 <div id="gpsStatus">
 
-Mencoba mengambil lokasi smartphone...
+Lokasi laporan memakai GPS node RescueNet otomatis.
 
 </div>
 
@@ -621,57 +890,6 @@ type="submit">
 
 
 </div>
-
-
-<script>
-
-if (navigator.geolocation)
-{
-
-    navigator.geolocation.getCurrentPosition(
-
-        function(p)
-        {
-
-            document.getElementById('lat').value =
-                p.coords.latitude;
-
-            document.getElementById('lon').value =
-                p.coords.longitude;
-
-
-            document.getElementById('gpsStatus').innerText =
-                'GPS aktif: ' +
-                p.coords.latitude.toFixed(5) +
-                ', ' +
-                p.coords.longitude.toFixed(5);
-
-        },
-
-        function(e)
-        {
-
-            document.getElementById('gpsStatus').innerText =
-                'GPS tidak tersedia. Isi lokasi manual.';
-
-        },
-
-        {
-            timeout: 5000
-        }
-
-    );
-
-}
-else
-{
-
-    document.getElementById('gpsStatus').innerText =
-        'Perangkat tidak mendukung GPS. Isi lokasi manual.';
-
-}
-
-</script>
 
 
 </body>
@@ -915,27 +1133,15 @@ void handleSubmit()
             : "-";
 
 
-    String latStr =
-        server.hasArg("lat")
-            ? server.arg("lat")
-            : "0";
+    bool hasGps;
+    float lat;
+    float lon;
 
-
-    String lonStr =
-        server.hasArg("lon")
-            ? server.arg("lon")
-            : "0";
-
-
-    float lat =
-        latStr.toFloat();
-
-    float lon =
-        lonStr.toFloat();
-
-
-    bool hasGps =
-        (lat != 0.0 || lon != 0.0);
+    getNodeLocation(
+        hasGps,
+        lat,
+        lon
+    );
 
 
     String lokasi =
@@ -1025,11 +1231,20 @@ void handleSubmit()
 
 void handleSOS()
 {
+    bool hasGps;
+    float lat;
+    float lon;
+
+    getNodeLocation(
+        hasGps,
+        lat,
+        lon
+    );
 
     sendReport(
-        false,
-        0,
-        0,
+        hasGps,
+        lat,
+        lon,
         "KRITIS",
         1,
         true,
@@ -1819,6 +2034,23 @@ void setup()
 
 
     // ------------------------------------------------------------
+    // GPS onboard T-Beam
+    // ------------------------------------------------------------
+
+    GPSSerial.begin(
+        GPS_BAUD,
+        SERIAL_8N1,
+        GPS_RX_PIN,
+        GPS_TX_PIN
+    );
+
+
+    Serial.println(
+        "[GPS] NEO-M8N onboard aktif. Menunggu fix satelit..."
+    );
+
+
+    // ------------------------------------------------------------
     // LoRa
     // ------------------------------------------------------------
 
@@ -1927,6 +2159,13 @@ void loop()
 {
 
     // ------------------------------------------------------------
+    // GPS node
+    // ------------------------------------------------------------
+
+    readNodeGps();
+
+
+    // ------------------------------------------------------------
     // Captive portal
     // ------------------------------------------------------------
 
@@ -1975,10 +2214,21 @@ void loop()
         );
 
 
+        bool hasGps;
+        float lat;
+        float lon;
+
+        getNodeLocation(
+            hasGps,
+            lat,
+            lon
+        );
+
+
         sendReport(
-            false,
-            0,
-            0,
+            hasGps,
+            lat,
+            lon,
             "KRITIS",
             1,
             true,
