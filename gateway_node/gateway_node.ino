@@ -1,41 +1,45 @@
 /*
  * RescueNet - GATEWAY NODE FIRMWARE
  * ==================================
- * Board   : LILYGO TTGO LoRa32 (V2.1_1.6) - ESP32 + SX1276 onboard + OLED SSD1306
+ * Board   : LILYGO T-Beam V1.2 AXP2101 - ESP32 + SX1276 + PMU AXP2101
  * Radio   : LoRa SX1276 (library: sandeepmistry/LoRa)
+ * PMU     : AXP2101 (library: XPowersLib by lewisxhe) -- WAJIB, tanpa ini radio
+ *           LoRa tidak dapat suplai listrik sama sekali.
  * Fungsi  :
  *   1. Mendengarkan semua paket LoRa dari field node (langsung/multi-hop)
  *   2. Melakukan dedup (paket sama tidak diproses dua kali)
  *   3. Meneruskan paket valid ke Raspberry Pi via kabel USB (Serial)
- *   4. Menampilkan status gateway di OLED (jml paket diterima, RSSI terakhir)
+ *   4. Menampilkan status gateway di OLED (jika ada) & Serial Monitor
  *
  * Gateway ini TIDAK melakukan relay balik ke jaringan LoRa (beda dengan field node),
  * karena tugasnya hanya menyerap data menuju posko.
  *
  * Hubungkan ke Raspberry Pi via kabel USB (data). Baud rate: 115200.
- *
- * !! CEK REVISI BOARD ANDA !! Pin di bawah untuk varian V2.1_1.6. Board lain
- * lihat tabel di docs/INSTRUKSI_IMPLEMENTASI.md bagian LILYGO LoRa32.
  */
 
 #include <SPI.h>
 #include <LoRa.h>
 #include <Wire.h>
+#include <XPowersLib.h>            // Install via Library Manager: "XPowersLib" by lewisxhe
 #include <U8g2lib.h>
 
-// ================== PIN LoRa ONBOARD LILYGO LoRa32 V2.1_1.6 ==================
+// ================== PIN LoRa ONBOARD T-BEAM V1.2 ==================
 #define LORA_SS    18
 #define LORA_RST   23
 #define LORA_DIO0  26
 #define LORA_FREQ  923E6
 
-// ================== PIN OLED ONBOARD ==================
-#define OLED_SDA 21
-#define OLED_SCL 22
-#define OLED_RST 16
-U8G2_SSD1306_128X64_NONAME_F_HW_I2C u8g2(U8G2_R0, OLED_RST, OLED_SCL, OLED_SDA);
+// ================== PIN PMU AXP2101 (I2C) ==================
+#define PMU_SDA 21
+#define PMU_SCL 22
+XPowersPMU PMU;
+bool pmuOK = false;
 
-#define LED_PIN 25
+// ================== PIN OLED (OPSIONAL, via I2C bus sama) ==================
+U8G2_SSD1306_128X64_NONAME_F_HW_I2C u8g2(U8G2_R0, U8X8_PIN_NONE, PMU_SCL, PMU_SDA);
+bool oledOK = false;
+
+#define LED_PIN 4
 
 #define CACHE_SIZE 40
 uint16_t seenPackets[CACHE_SIZE];
@@ -52,7 +56,18 @@ void markSeen(uint16_t id) {
   cacheIndex = (cacheIndex + 1) % CACHE_SIZE;
 }
 
+void initPMU() {
+  pmuOK = PMU.begin(Wire, AXP2101_SLAVE_ADDRESS, PMU_SDA, PMU_SCL);
+  if (!pmuOK) {
+    Serial.println("PMU AXP2101 GAGAL diinisialisasi! LoRa tidak akan menyala.");
+    return;
+  }
+  PMU.setALDO2(3300); PMU.enableALDO2();   // suplai ke modul LoRa
+  Serial.println("PMU AXP2101 siap. Rail LoRa (ALDO2) dinyalakan.");
+}
+
 void updateOLED(String lastEvent) {
+  if (!oledOK) return;
   u8g2.clearBuffer();
   u8g2.setFont(u8g2_font_6x10_tf);
   u8g2.drawStr(0, 10, "RescueNet GATEWAY");
@@ -67,12 +82,24 @@ void setup() {
   pinMode(LED_PIN, OUTPUT);
   while (!Serial) { delay(10); }
 
-  u8g2.begin();
-  updateOLED("Booting...");
+  Wire.begin(PMU_SDA, PMU_SCL);
+
+  // Deteksi otomatis apakah OLED terpasang (alamat I2C standar SSD1306 = 0x3C)
+  Wire.beginTransmission(0x3C);
+  oledOK = (Wire.endTransmission() == 0);
+  if (oledOK) {
+    u8g2.begin();
+    updateOLED("Booting...");
+    Serial.println("OLED terdeteksi.");
+  } else {
+    Serial.println("OLED tidak terdeteksi (board tanpa layar) -- status hanya via Serial Monitor.");
+  }
+
+  initPMU();
 
   LoRa.setPins(LORA_SS, LORA_RST, LORA_DIO0);
   if (!LoRa.begin(LORA_FREQ)) {
-    Serial.println("LoRa init GAGAL! Periksa modul/board.");
+    Serial.println("LoRa init GAGAL! Periksa modul/board/PMU.");
     updateOLED("LoRa GAGAL init!");
     while (1) { digitalWrite(LED_PIN, !digitalRead(LED_PIN)); delay(200); }
   }

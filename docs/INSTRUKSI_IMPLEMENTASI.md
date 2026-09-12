@@ -29,63 +29,61 @@ jika perlu) → ESP32 Gateway → USB Serial → Raspberry Pi (MQTT → SQLite) 
 
 ## 2. Daftar Komponen & Wiring
 
-Proyek ini menggunakan board **LILYGO TTGO LoRa32**, yaitu modul ESP32 dengan
-chip LoRa SX1276 dan OLED SSD1306 0.96" sudah terintegrasi di satu papan
-(tidak perlu wiring manual seperti modul LoRa terpisah). Board ini juga
-punya konektor baterai Li-Po dengan charging circuit onboard.
+Proyek ini menggunakan board **LILYGO TTGO T-Beam V1.2 (AXP2101)**, yaitu modul
+ESP32 dengan chip LoRa SX1276, GPS NEO-M8N, dan chip manajemen daya (PMU)
+AXP2101 terintegrasi. Berbeda dari LoRa32 biasa, board ini **wajib** menginisialisasi
+PMU lewat kode sebelum radio LoRa bisa menyala — tanpa itu, `LoRa.begin()` akan
+selalu gagal walau wiring/pin sudah benar.
 
 ### 2.1 Field Node (per unit)
 | Komponen | Jumlah | Catatan |
 |---|---|---|
-| LILYGO TTGO LoRa32 (V2.1_1.6, varian 868/915 MHz) | 1 | ESP32 + SX1276 + OLED sudah jadi satu board |
+| LILYGO T-Beam V1.2 AXP2101 (varian 868/915 MHz) | 1 | ESP32 + SX1276 + GPS + PMU jadi satu board |
 | Antena LoRa (SMA/IPEX, sesuai varian board) | 1 | **Wajib dipasang sebelum menyalakan radio** — transmit tanpa antena bisa merusak chip RF |
-| Push button eksternal (opsional) | 1 | Untuk SOS, jika tidak mau pakai tombol PRG/BOOT bawaan |
-| Baterai Li-Po (JST 1.25mm, mis. 18650 + holder atau pouch cell) | 1 | Board punya charging circuit onboard; target daya tahan ≥8 jam |
-| Casing (3D print/project box) | 1 | Tanpa breadboard/jumper pada unit akhir |
+| Antena GPS (biasanya sudah include, konektor terpisah dari antena LoRa) | 1 | Untuk modul GPS NEO-M8N onboard |
+| Baterai Li-Po (JST 1.25mm) | 1 | Board punya charging circuit onboard (via chip AXP2101); target daya tahan ≥8 jam |
+| Casing (3D print/project box) | 1 | Sediakan lubang untuk tombol USER/IO38 dan port USB-C |
 
 ### 2.2 Verifikasi Frekuensi Board
-LILYGO LoRa32 dijual dalam beberapa varian frekuensi radio (433 / 868 / 915 MHz)
+T-Beam dijual dalam beberapa varian frekuensi radio (433 / 868 / 915 MHz)
 tergantung pemasangan matching circuit RF di pabrik. **Pastikan Anda membeli
 varian 868 MHz atau 915 MHz** — chip SX1276 di varian ini secara fisik masih
 bisa di-tune ke 923 MHz (rentang kerja SX1276 adalah 862–1020 MHz), sesuai
 regulasi SDPPI Indonesia (AS923). **Varian 433 MHz tidak bisa dipakai** karena
 matching circuit RF-nya berbeda secara fisik.
 
-### 2.3 Pin Onboard (sudah diatur di firmware, cek jika board Anda beda revisi)
+### 2.3 Tombol Fisik T-Beam (bukan seperti board ESP32 biasa)
+T-Beam punya 3 tombol dengan fungsi berbeda dari board ESP32 pada umumnya:
 
-**Varian V2.1_1.6 (paling umum saat ini, dipakai di firmware ini):**
+| Tombol | Terhubung ke | Fungsi | Dipakai di firmware untuk |
+|---|---|---|---|
+| **RST** | EN/CHIP_PU ESP32 | Reset keras chip | (tidak dipakai eksplisit) |
+| **USER / IO38** | GPIO38 langsung | Satu-satunya tombol ke GPIO biasa | **Tombol SOS** |
+| **PWR** | Chip AXP2101 | Nyala/mati board dari baterai | (tidak dipakai di kode) |
+
+Tidak ada tombol yang terhubung ke GPIO0 (BOOT), jadi proses **upload firmware
+mengandalkan auto-reset otomatis** dari chip USB-serial — biasanya tidak perlu
+menahan tombol apa pun saat upload.
+
+### 2.4 Pin Onboard T-Beam V1.2 AXP2101 (sudah diatur di firmware)
 | Fungsi | Pin |
 |---|---|
 | LoRa SCK/MISO/MOSI | 5 / 19 / 27 (default HSPI, otomatis) |
 | LoRa NSS/CS | GPIO 18 |
 | LoRa RESET | GPIO 23 |
 | LoRa DIO0 | GPIO 26 |
-| OLED SDA / SCL / RST | GPIO 21 / 22 / 16 |
-| LED onboard | GPIO 25 |
-| ADC baterai | GPIO 35 |
-| Tombol PRG/BOOT (dipakai sbg SOS) | GPIO 0 |
+| PMU AXP2101 SDA / SCL | GPIO 21 / 22 |
+| PMU IRQ | GPIO 35 (tidak dipakai eksplisit di firmware ini) |
+| Tombol USER (SOS) | GPIO 38 |
+| OLED (jika ada, opsional) | Bus I2C sama dengan PMU (21/22), dideteksi otomatis saat boot |
 
-**Varian V1 (revisi lama, biasanya OLED di sisi kanan board, cek label board Anda):**
-| Fungsi | Pin |
-|---|---|
-| LoRa NSS/CS | GPIO 18 |
-| LoRa RESET | GPIO 14 |
-| LoRa DIO0 | GPIO 26 |
-| OLED SDA / SCL / RST | GPIO 4 / 15 / 16 |
-
-Jika board Anda ternyata V1, ubah `#define LORA_RST`, `OLED_SDA`, `OLED_SCL`
-di kedua file `.ino` sesuai tabel di atas. Cara memastikan revisi: cek tulisan
-kecil di PCB dekat konektor baterai (biasanya tertulis "TTGO LoRa32 V1.x" atau
-"V2.1_1.6"), atau cocokkan posisi antar-muka OLED terhadap foto di halaman
-produk pembelian.
-
-### 2.4 Gateway Node
-Board fisik sama persis dengan field node (LILYGO LoRa32), tapi firmware
-berbeda — **tanpa** WiFi captive portal, hanya mendengarkan LoRa dan
+### 2.5 Gateway Node
+Board fisik sama persis dengan field node (LILYGO T-Beam), tapi firmware
+berbeda — **tanpa** WiFi captive portal dan GPS, hanya mendengarkan LoRa dan
 meneruskan ke Raspberry Pi. Terhubung ke Raspberry Pi via kabel USB (data,
 bukan hanya kabel charging — banyak kabel murah cuma bawa jalur power).
 
-### 2.5 Server (Raspberry Pi)
+### 2.6 Server (Raspberry Pi)
 - Raspberry Pi 4 (atau laptop sebagai pengganti untuk skenario tanpa Raspberry Pi)
 - microSD 32GB (OS: Raspberry Pi OS Lite/Desktop)
 - Power bank/adaptor 5V 3A
@@ -95,24 +93,30 @@ bukan hanya kabel charging — banyak kabel murah cuma bawa jalur power).
 ## 3. Setup Firmware (Arduino IDE)
 
 1. Install **Arduino IDE** + board package **ESP32** (Boards Manager → cari "esp32" oleh Espressif).
-2. Pilih board yang benar di menu Tools → Board: **"TTGO LoRa32-OLED V1"** (untuk board V1)
-   atau board ESP32 generik jika opsi LoRa32 tidak muncul — pilih **"ESP32 Dev Module"**
-   sebagai fallback, pin tetap diatur manual di kode jadi tetap berfungsi.
-3. Install 2 library via Library Manager:
+2. Pilih board di menu Tools → Board → ESP32 Arduino: **"T-Beam"** jika muncul di daftar,
+   atau **"ESP32 Dev Module"** sebagai fallback (pin tetap diatur manual di kode jadi tetap berfungsi).
+3. Install 3 library via Library Manager:
    - **LoRa** by Sandeep Mistry
-   - **U8g2** by oliver (untuk OLED)
+   - **XPowersLib** by lewisxhe (**wajib** — untuk inisialisasi PMU AXP2101, tanpa ini LoRa tidak menyala)
+   - **U8g2** by oliver (untuk OLED, opsional — kode akan otomatis mendeteksi ada/tidaknya OLED)
 4. Buka `field_node/field_node.ino`.
    - **WAJIB**: ubah `#define NODE_ID` menjadi angka unik untuk setiap unit
      (1, 2, 3, dst — jangan ada yang sama).
-   - Cek revisi board Anda (lihat tabel pin di atas), sesuaikan pin jika perlu.
    - Pasang antena LoRa sebelum menyalakan board (jangan transmit tanpa antena).
    - Upload ke tiap board field node satu per satu.
 5. Buka `gateway_node/gateway_node.ino`, upload ke board yang akan jadi gateway
    (tidak perlu ubah NODE_ID, gateway selalu ID 0).
-6. Verifikasi via OLED bawaan tiap board (tidak perlu laptop terus terhubung):
-   - Field node: layar menampilkan "RescueNet Node X" dan "Siap. SSID:..."
-   - Gateway: layar menampilkan "RescueNet GATEWAY" dan "Siap. Menunggu paket..."
-   - Bisa juga cek Serial Monitor (115200 baud) untuk log detail (`[TX]`, `[RX]`, `[RELAY]`).
+6. Verifikasi via Serial Monitor (115200 baud) — harus muncul urutan log:
+   ```
+   OLED terdeteksi.                                  (atau "tidak terdeteksi" jika tanpa layar, aman)
+   PMU AXP2101 siap. Rail LoRa (ALDO2) & GPS (ALDO3) dinyalakan.
+   === RescueNet Field Node X siap ===
+   SSID: RescueNet-NodeX | Portal: http://192.168.4.1
+   ```
+   Kalau muncul "PMU AXP2101 GAGAL diinisialisasi!" → cek kembali board (kemungkinan
+   board Anda bukan varian AXP2101, atau ada masalah di jalur I2C).
+   Kalau muncul "LoRa init GAGAL!" setelah PMU sukses → kemungkinan antena belum
+   terpasang atau modul LoRa fisik bermasalah.
 
 **Penting — Sync Word LoRa**: semua node (field + gateway) harus memakai
 `LoRa.setSyncWord(0xF3)` yang sama, jangan diubah berbeda antar unit, atau
@@ -193,19 +197,27 @@ sudo systemctl enable --now rescuenet-serial rescuenet-backend
 ```
 
 ### 4.2 Catatan: Penyesuaian dari Batasan Teknis di Proposal
-Beralih ke LILYGO LoRa32 mengubah beberapa asumsi teknis di Bab 2.4 proposal:
+Beralih ke LILYGO T-Beam AXP2101 mengubah beberapa asumsi teknis di Bab 2.4 proposal:
 - **Antena**: proposal menyebut "antena harus terpasang permanen" dengan
-  perhitungan panjang kawat 7,72 cm (antena monopole custom). Pada LoRa32,
+  perhitungan panjang kawat 7,72 cm (antena monopole custom). Pada T-Beam,
   antena terpasang via konektor **SMA atau u.FL/IPEX**, bukan kawat solder
   langsung. Tetap penting antena terpasang kencang (pakai lem panas di
   sambungan konektor) agar tidak lepas saat dibawa di lapangan — tapi bukan
   lagi solder permanen.
-- **RAB**: satu unit LoRa32 (ESP32+LoRa+OLED jadi satu) biasanya lebih murah
-  dari membeli ESP32 DevKit + modul LoRa RA-02 terpisah, dan Anda mendapat
-  OLED gratis untuk debug lapangan. Perbarui Tabel 5.2 di proposal dengan
-  harga LILYGO LoRa32 aktual dari supplier Anda.
+- **Manajemen daya**: T-Beam punya chip PMU (AXP2101) yang mengatur suplai
+  listrik ke tiap modul (LoRa, GPS) secara terpisah — ini **wajib diinisialisasi
+  lewat kode** (lihat `initPMU()` di firmware), berbeda dari board ESP32+LoRa
+  polos yang listriknya langsung tersambung tanpa switching.
+- **GPS built-in**: T-Beam sudah punya modul GPS NEO-M8N onboard. Proposal
+  awalnya mengandalkan GPS dari smartphone korban (via browser geolocation),
+  fitur ini tetap dipakai untuk portal korban. GPS onboard T-Beam bisa jadi
+  pengembangan lanjutan opsional (misal mencatat lokasi presisi tiap field
+  node itu sendiri), belum diimplementasikan di firmware versi ini.
+- **RAB**: harga per-unit T-Beam (ESP32+LoRa+GPS+PMU jadi satu) berbeda dari
+  ESP32 DevKit + modul LoRa RA-02 terpisah. Perbarui Tabel 5.2 di proposal
+  dengan harga T-Beam AXP2101 aktual dari supplier Anda.
 - **Casing**: pastikan desain 3D print/box menyediakan lubang untuk tombol
-  PRG/BOOT (dipakai sebagai SOS di firmware ini) dan port USB-C untuk charging.
+  USER/IO38 (dipakai sebagai SOS di firmware ini), tombol PWR, dan port USB-C.
 
 ---
 

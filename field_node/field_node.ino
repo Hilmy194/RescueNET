@@ -1,23 +1,24 @@
 /*
  * RescueNet - FIELD NODE FIRMWARE
  * ================================
- * Board   : LILYGO TTGO LoRa32 (V2.1_1.6) - ESP32 + SX1276 onboard + OLED SSD1306
+ * Board   : LILYGO T-Beam V1.2 AXP2101 - ESP32 + SX1276 + GPS NEO-M8N + PMU AXP2101
  * Radio   : LoRa SX1276 (library: sandeepmistry/LoRa)
- * Display : OLED 0.96" SSD1306 128x64 onboard (library: U8g2 atau Adafruit SSD1306)
+ * PMU     : AXP2101 (library: XPowersLib by lewisxhe) -- WAJIB, tanpa ini radio LoRa
+ *           dan GPS tidak dapat suplai listrik sama sekali.
+ * Display : OLED SSD1306 (opsional, hanya jika modul OLED terpasang di board Anda)
  * Fungsi  :
  *   1. Membuat WiFi Access Point + Captive Portal (portal bantuan lokal)
  *   2. Menerima input laporan korban dari smartphone via form web
  *   3. Mengirim laporan via LoRa menuju gateway (langsung / multi-hop)
  *   4. Meneruskan (relay) paket LoRa dari node lain -> flooding mesh
- *   5. Menampilkan status node di OLED bawaan (ID, jml TX/RX, baterai)
+ *   5. Menampilkan status node di OLED (jika ada) & Serial Monitor
  *
  * PENTING: Ubah NODE_ID di bawah untuk SETIAP field node sebelum flashing!
  * Node ID harus unik: 1, 2, 3, dst. Gateway selalu ID 0.
  *
- * !! CEK REVISI BOARD ANDA !! Pin di bawah untuk varian V2.1_1.6 (paling umum
- * dijual saat ini, tulisan "TTGO LoRa32 V2.1_1.6" biasanya ada di board/box).
- * Jika board Anda V1 atau V2 lama, pin LORA_RST dan OLED berbeda -- lihat
- * tabel alternatif di docs/INSTRUKSI_IMPLEMENTASI.md bagian LILYGO LoRa32.
+ * Tombol fisik T-Beam: RST (reset chip, bukan GPIO biasa), PWR (nyala/mati via
+ * PMU, bukan GPIO biasa), USER/IO38 (satu-satunya tombol yang terhubung
+ * langsung ke GPIO ESP32) -- dipakai di firmware ini sebagai tombol SOS.
  */
 
 #include <WiFi.h>
@@ -26,7 +27,8 @@
 #include <SPI.h>
 #include <LoRa.h>
 #include <Wire.h>
-#include <U8g2lib.h>              // Install via Library Manager: "U8g2" by oliver
+#include <XPowersLib.h>            // Install via Library Manager: "XPowersLib" by lewisxhe
+#include <U8g2lib.h>               // Install via Library Manager: "U8g2" by oliver (OLED opsional)
 
 // ================== KONFIGURASI NODE (WAJIB DIUBAH PER PERANGKAT) ==================
 #define NODE_ID        1          // <-- UBAH: ID unik node ini (1,2,3,...)
@@ -34,8 +36,8 @@
 #define MAX_HOP        5          // TTL maksimum paket sebelum dibuang (cegah looping)
 #define SSID_PREFIX    "RescueNet-Node"   // SSID akan jadi "RescueNet-Node1", dst.
 
-// ================== PIN LoRa ONBOARD LILYGO LoRa32 V2.1_1.6 ==================
-// SPI (SCK/MISO/MOSI) memakai pin default HSPI ESP32 (18/19/23), tidak perlu didefinisikan manual.
+// ================== PIN LoRa ONBOARD T-BEAM V1.2 ==================
+// SPI (SCK/MISO/MOSI) memakai pin default HSPI ESP32 (5/19/27), tidak perlu didefinisikan manual.
 #define LORA_SS    18
 #define LORA_RST   23
 #define LORA_DIO0  26
@@ -44,27 +46,44 @@
                                    // punya rentang 862-1020MHz jadi 923MHz masih tercakup).
                                    // Jangan pakai varian 433MHz, tidak akan bisa di-tune ke 923MHz.
 
-// ================== PIN OLED ONBOARD (SSD1306, via I2C) ==================
+// ================== PIN PMU AXP2101 (I2C) ==================
+#define PMU_SDA 21
+#define PMU_SCL 22
+#define PMU_IRQ 35
+XPowersPMU PMU;
+bool pmuOK = false;
+
+// ================== PIN OLED (OPSIONAL, via I2C bus sama dengan PMU) ==================
 #define OLED_SDA 21
 #define OLED_SCL 22
-#define OLED_RST 16
-U8G2_SSD1306_128X64_NONAME_F_HW_I2C u8g2(U8G2_R0, OLED_RST, OLED_SCL, OLED_SDA);
+U8G2_SSD1306_128X64_NONAME_F_HW_I2C u8g2(U8G2_R0, U8X8_PIN_NONE, OLED_SCL, OLED_SDA);
+bool oledOK = false;
 
 // ================== PIN LAINNYA ==================
-#define SOS_BUTTON_PIN 0          // Pakai tombol PRG/BOOT bawaan board (GPIO0, aktif LOW)
-                                   // Bisa diganti tombol eksternal terpisah jika mau lokasi lebih mudah dijangkau
-#define LED_PIN        25         // LED indikator bawaan LoRa32 (bukan GPIO2 seperti DevKit biasa)
-#define VBAT_PIN       35         // Pin pembacaan tegangan baterai onboard (via voltage divider)
+#define SOS_BUTTON_PIN 38         // Tombol USER bawaan T-Beam (satu-satunya tombol ke GPIO langsung)
+#define LED_PIN        4          // LED indikator (T-Beam v1.2: cek label board, umumnya GPIO4 atau GPIO14)
 
 uint32_t txCount = 0, rxCount = 0;
 
 float readBatteryVoltage() {
-  // Divider onboard LILYGO biasanya 1:2, ADC 12-bit, Vref ~3.3V
-  int raw = analogRead(VBAT_PIN);
-  return (raw / 4095.0) * 3.3 * 2.0;
+  if (!pmuOK) return 0.0;
+  return PMU.getBattVoltage() / 1000.0;   // XPowersLib mengembalikan satuan mV
+}
+
+void initPMU() {
+  pmuOK = PMU.begin(Wire, AXP2101_SLAVE_ADDRESS, PMU_SDA, PMU_SCL);
+  if (!pmuOK) {
+    Serial.println("PMU AXP2101 GAGAL diinisialisasi! LoRa/GPS tidak akan menyala.");
+    return;
+  }
+  // Nyalakan rail daya untuk modul LoRa & GPS (sesuai referensi firmware resmi T-Beam v1.2)
+  PMU.setALDO2(3300);  PMU.enableALDO2();   // suplai ke modul LoRa
+  PMU.setALDO3(3300);  PMU.enableALDO3();   // suplai ke modul GPS
+  Serial.println("PMU AXP2101 siap. Rail LoRa (ALDO2) & GPS (ALDO3) dinyalakan.");
 }
 
 void updateOLED(String lastEvent) {
+  if (!oledOK) return;
   u8g2.clearBuffer();
   u8g2.setFont(u8g2_font_6x10_tf);
   u8g2.drawStr(0, 10, ("RescueNet Node " + String(NODE_ID)).c_str());
@@ -294,12 +313,24 @@ void setup() {
   pinMode(SOS_BUTTON_PIN, INPUT_PULLUP);
   randomSeed(analogRead(0) + NODE_ID + millis());
 
-  u8g2.begin();
-  u8g2.clearBuffer();
-  u8g2.setFont(u8g2_font_6x10_tf);
-  u8g2.drawStr(0, 20, "RescueNet");
-  u8g2.drawStr(0, 34, "Booting...");
-  u8g2.sendBuffer();
+  Wire.begin(PMU_SDA, PMU_SCL);
+
+  // Deteksi otomatis apakah OLED terpasang (alamat I2C standar SSD1306 = 0x3C)
+  Wire.beginTransmission(0x3C);
+  oledOK = (Wire.endTransmission() == 0);
+  if (oledOK) {
+    u8g2.begin();
+    u8g2.clearBuffer();
+    u8g2.setFont(u8g2_font_6x10_tf);
+    u8g2.drawStr(0, 20, "RescueNet");
+    u8g2.drawStr(0, 34, "Booting...");
+    u8g2.sendBuffer();
+    Serial.println("OLED terdeteksi.");
+  } else {
+    Serial.println("OLED tidak terdeteksi (board tanpa layar) -- status hanya via Serial Monitor.");
+  }
+
+  initPMU();
 
   String ssid = String(SSID_PREFIX) + String(NODE_ID);
   WiFi.softAP(ssid.c_str());               // tanpa password agar korban mudah connect
@@ -331,8 +362,7 @@ void loop() {
   server.handleClient();
   checkLoRaReceive();
 
-  // Catatan: SOS_BUTTON_PIN memakai tombol PRG/BOOT (GPIO0) bawaan board.
-  // Tombol ini dibaca setelah 2 detik boot selesai agar tidak konflik dengan mode flashing.
+  // Tombol USER (IO38) T-Beam dipakai sebagai tombol SOS fisik.
   static unsigned long lastSOS = 0;
   if (millis() > 2000 && digitalRead(SOS_BUTTON_PIN) == LOW && millis() - lastSOS > 4000) {
     lastSOS = millis();
