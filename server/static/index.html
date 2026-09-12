@@ -1,0 +1,45 @@
+<!DOCTYPE html>
+<html lang="id">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>RescueNet - Dashboard Monitoring Posko</title>
+<link rel="stylesheet" href="style.css">
+</head>
+<body>
+  <header>
+    <h1>&#128680; RescueNet <span>Dashboard Monitoring Posko</span></h1>
+    <div id="connStatus" class="badge offline">Menghubungkan...</div>
+  </header>
+
+  <section class="stats">
+    <div class="stat-card"><span id="statTotal">0</span><label>Total Laporan</label></div>
+    <div class="stat-card sos"><span id="statSOS">0</span><label>Sinyal SOS</label></div>
+    <div class="stat-card"><span id="statBaru">0</span><label>Belum Ditangani</label></div>
+    <div class="stat-card"><span id="statNodes">0</span><label>Node Aktif</label></div>
+  </section>
+
+  <main>
+    <div class="panel">
+      <h2>Sebaran Lokasi Korban</h2>
+      <svg id="mapSvg" viewBox="0 0 400 400"></svg>
+      <p class="hint">Titik posisi relatif berdasarkan koordinat GPS yang diterima. Titik merah = SOS.</p>
+    </div>
+
+    <div class="panel wide">
+      <h2>Daftar Laporan</h2>
+      <table id="reportTable">
+        <thead>
+          <tr>
+            <th>Waktu</th><th>Node</th><th>Hop</th><th>Kondisi</th><th>Jumlah</th>
+            <th>Lokasi</th><th>Pesan</th><th>RSSI</th><th>Status</th><th>Aksi</th>
+          </tr>
+        </thead>
+        <tbody id="reportBody"></tbody>
+      </table>
+    </div>
+  </main>
+
+  <script src="app.js"></script>
+</body>
+</html>

@@ -1,0 +1,46 @@
+* { box-sizing: border-box; }
+body {
+  font-family: -apple-system, "Segoe UI", Roboto, sans-serif;
+  background: #0f1120;
+  color: #e6e6f0;
+  margin: 0;
+}
+header {
+  background: #16213e;
+  padding: 16px 24px;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  border-bottom: 3px solid #e94560;
+}
+header h1 { font-size: 20px; margin: 0; }
+header h1 span { font-size: 13px; font-weight: normal; color: #9a9ac0; display: block; }
+.badge { padding: 6px 14px; border-radius: 20px; font-size: 12px; font-weight: bold; }
+.badge.online { background: #0f9d58; color: white; }
+.badge.offline { background: #e94560; color: white; }
+
+.stats { display: flex; gap: 16px; padding: 16px 24px; flex-wrap: wrap; }
+.stat-card {
+  background: #16213e; border-radius: 10px; padding: 14px 20px; min-width: 130px; text-align: center;
+}
+.stat-card span { display: block; font-size: 28px; font-weight: bold; color: #4fd1c5; }
+.stat-card.sos span { color: #e94560; }
+.stat-card label { font-size: 12px; color: #9a9ac0; }
+
+main { display: flex; gap: 16px; padding: 0 24px 24px; flex-wrap: wrap; }
+.panel { background: #16213e; border-radius: 10px; padding: 16px; flex: 1; min-width: 320px; }
+.panel.wide { flex: 3; overflow-x: auto; }
+.panel h2 { font-size: 15px; margin-top: 0; color: #9a9ac0; }
+#mapSvg { width: 100%; height: 320px; background: #0f1120; border-radius: 8px; }
+.hint { font-size: 11px; color: #6a6a90; }
+
+table { width: 100%; border-collapse: collapse; font-size: 13px; }
+th, td { padding: 8px 10px; text-align: left; border-bottom: 1px solid #262a4a; white-space: nowrap; }
+th { color: #9a9ac0; font-weight: 600; }
+tr.sos { background: rgba(233, 69, 96, 0.15); }
+select.status-select { background: #0f1120; color: #e6e6f0; border: 1px solid #262a4a; border-radius: 6px; padding: 4px; }
+.tag { padding: 3px 8px; border-radius: 6px; font-size: 11px; font-weight: bold; }
+.tag.RINGAN { background: #2b6b3f; }
+.tag.SEDANG { background: #a8862e; }
+.tag.BERAT { background: #b5541f; }
+.tag.KRITIS { background: #e94560; }
